@@ -125,6 +125,14 @@ Neo4j rbac 权限隔离。
 
 按以上思路落地，可在保持系统简单可维护的同时，获得近实时（秒级）的一致数据视图，支撑事务处理与图分析两类负载。祝你架构顺利！
 
+8  示例代码
+仓库新增 `sync_service.py` 与 `sync_service_mysql.py` 两个脚本，用于演示事件消费写入。
+
+- `sync_service.py` 从 Kafka 主题 `mysql.customer.v1` 读取事件，利用 Neo4j Bolt 驱动按 `eventId` 幂等 `MERGE` 节点；
+- `sync_service_mysql.py` 监听 `neo4j.customer.v1`，将图更新以 Upsert 方式写回 MySQL。
+
+脚本示例化了循环抑制、去重与基本 Upsert 逻辑，方便在本地小规模试验。
+
 
 
 
