@@ -6,19 +6,25 @@ import mysql.connector
 class SyncServiceMySQL:
     """Consume Neo4j change events and write them into MySQL tables.
 
-    Events should have:
-      - eventId
-      - payload: dict with columns
-      - source: origin system
-      - table: destination table name
+    Events should have at minimum:
+      - ``eventId`` for idempotency
+      - ``schemaVersion`` to route transformations
+      - ``payload``: dict with columns
+      - ``source``: origin system
+      - ``table``: destination table name
     """
 
-    def __init__(self, kafka_config, mysql_config, topic, source_label="NEO4J"):
+    def __init__(self, kafka_config, mysql_config, topic,
+                 source_label="NEO4J", version_handlers=None):
         self.consumer = Consumer(kafka_config)
         self.consumer.subscribe([topic])
         self.conn = mysql.connector.connect(**mysql_config)
         self.source_label = source_label
         self.seen_event_ids = set()
+        self.version_handlers = version_handlers or {
+            1: self._handle_v1,
+            2: self._handle_v2,
+        }
 
     def close(self):
         self.consumer.close()
@@ -41,6 +47,15 @@ class SyncServiceMySQL:
         if data.get("source") == self.source_label:
             return
 
+        version = data.get("schemaVersion", 1)
+        handler = self.version_handlers.get(version)
+        if not handler:
+            print(f"no handler for schemaVersion {version}")
+            return
+
+        handler(data)
+
+    def _handle_v1(self, data):
         table = data.get("table")
         payload = data.get("payload", {})
         if not table or "id" not in payload:
@@ -50,10 +65,17 @@ class SyncServiceMySQL:
         columns = ", ".join(payload.keys())
         placeholders = ", ".join(["%s"] * len(payload))
         updates = ", ".join(f"{c}=VALUES({c})" for c in payload.keys())
-        sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {updates}"
+        sql = (
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+            f"ON DUPLICATE KEY UPDATE {updates}"
+        )
         with self.conn.cursor() as cur:
             cur.execute(sql, list(payload.values()))
         self.conn.commit()
+
+    def _handle_v2(self, data):
+        """Example handler for relationship join tables."""
+        self._handle_v1(data)
 
     def start(self):
         try:
